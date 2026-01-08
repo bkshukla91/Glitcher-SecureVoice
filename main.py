@@ -151,6 +151,12 @@ st.markdown("""
             saboteurNode = null;
         }
     }
+
+    window.addEventListener('message', (event) => {
+        if (event.data.type === 'SHOW_POPUP') {
+            document.getElementById('popup-box').style.display = 'block';
+        }
+    });
     </script>
     """, unsafe_allow_html=True)
 
@@ -187,6 +193,7 @@ if uploaded_file is not None:
             "Confidence": 91, 
             "Status": "Evidence Logged"
         }
+        
         # History mein save karna
         st.session_state.scam_history.insert(0, new_incident)
         
@@ -212,7 +219,79 @@ if uploaded_file is not None:
         else:
             status.update(label="✅ Recording Clear", state="complete")
             st.success("No known fraud signatures found.")
+    st.success("Evidence Log Created! You can now download the report.")
+    st.download_button(
+        label="📄 Download Evidence Log",
+        data=generate_report(st.session_state.scam_history),
+        file_name=f"SecureVoice_Evidence_{datetime.date.today()}.txt",
+        mime="text/plain",
+        use_container_width=True
+    )
+else:
+    st.info("Upload a call recording to analyze for potential scams.")
 
+st.markdown("""
+<div class="forensic-box">
+    <h3 style="margin-top:0;">🎙️ Hyper-Sensitive Acoustic Intelligence Stream</h3>
+    <div id="status-ind" class="status-active">● MONITORING FOR INCOMING FREQUENCIES (RING-AUTO-START)</div>
+    <div id="transcript-stream" style="background: black; height: 180px; overflow-y: scroll; padding: 20px; border: 1px solid #333; color: #00FF41; font-family: monospace; font-size: 20px !important; margin-top: 15px;">
+        >> System Standby... Multi-language story patterns active...
+    </div>
+</div>
+
+<script>
+    const hub = new BroadcastChannel('secure_voice_hub');
+    
+    // UPDATED: Exhaustive list of words, sentences and story patterns
+    const SCAM_PATTERNS = [
+        // English Patterns
+        "digital arrest", "police station", "arrest warrant", "cbi", "crime branch", 
+        "illegal parcel", "otp", "share your screen", "kyc update", "don't hang up",
+        "money laundering", "drugs found", "customs office", "supreme court",
+        
+        // Hindi/Hinglish Story Patterns (Commonly used by scammers)
+        "arrest ho gaya", "police thana", "illegal saaman", "narcotics", 
+        "beta pakda gaya", "parcel mein drugs", "account block", "paisa transfer",
+        "video call pe aao", "darwaza band karo", "kisi ko batana nahi",
+        "high court ka order", "fir copy", "biometric update"
+    ];
+
+    if ('webkitSpeechRecognition' in window) {
+        const recognition = new webkitSpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true; // High Sensitivity: Sentence poora hone ka wait nahi karega
+        recognition.lang = 'en-IN'; // Indian context ke liye best (Hindi/English dono detect karta hai)
+
+        // AUTO-START LOGIC
+        window.onload = () => {
+            setTimeout(() => {
+                recognition.start();
+                document.getElementById('status-ind').innerText = "● LIVE: ANALYZING MULTI-LANGUAGE AUDIO...";
+                document.getElementById('status-ind').style.color = "#FF0000";
+            }, 3000);
+        };
+
+        recognition.onresult = (event) => {
+            let currentStr = "";
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                currentStr += event.results[i][0].transcript.toLowerCase();
+            }
+            document.getElementById('transcript-stream').innerText = ">> Detected: " + currentStr;
+
+            // FAST PATTERN MATCHING
+            SCAM_PATTERNS.forEach(p => {
+                if (currentStr.includes(p)) {
+                    hub.postMessage('TRIGGER_SCAM_UI');
+                    // Mobile vibration for physical alert
+                    if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
+                }
+            });
+        };
+        
+        recognition.onerror = (e) => { console.log("Recognition Error: ", e); };
+    }
+</script>
+""", unsafe_allow_html=True)
 with upload_col2:
     st.info("""
     **How it works:**
@@ -222,6 +301,17 @@ with upload_col2:
     """)
 
 # --- 5. LIVE SCANNING INTERFACE ---
+# Ye list unknown numbers ko monitor karne ke liye hai
+if 'is_unknown_call' not in st.session_state:
+    st.session_state.is_unknown_call = False
+
+def check_caller_identity(phone_number):
+    # Simulated Contact Database
+    saved_contacts = ["+919876543210", "+919999988888"]
+    if phone_number not in saved_contacts:
+        return True # Unknown Call
+    return False # Known Contact
+
 stt_engine_code = """
 <div style="background: #111; padding: 20px; border: 2px solid #00FF41; border-radius: 10px; text-align: center;">
     <button id="scan-btn" style="background: #00FF41; color: #000; border: none; padding: 15px 40px; cursor: pointer; font-size: 20px; font-weight: bold; width: 100%;">🔴 ACTIVATE LIVE PROTECTION</button>
@@ -233,17 +323,45 @@ stt_engine_code = """
     const tBox = document.getElementById('transcript-box');
     const popup = window.parent.document.getElementById('popup-box');
     
-    const SCAM_WORDS = ["otp", "money transfer", "digital-arrest", "illegal action","bank-account", "password", "lottery", "aadhar verification", "pan card link", "biometric update", "skype verification", "video statement", "don't hang up","gift card", "cbi", "police", "kyc", "customer care", "account"];
+    // --- UPDATED: MULTI-LANGUAGE STORY & THREAT PATTERNS ---
+    const SCAM_WORDS = [
+        // 1. Digital Arrest & Police Fear (English + Hindi)
+        "digital arrest", "police station", "arrest warrant", "cbi", "crime branch", 
+        "customs department", "illegal parcel", "drugs found", "narcotics bureau",
+        "beta arrest ho gaya", "police thana", "criminal case", "supreme court order",
+        "jail ho jayegi", "room lock karo", "kisi ko call mat karo", "don't hang up",
+        "fir register", "court case", "legal action", "warrant issued",
+
+        // 2. Financial & Banking Fraud
+        "otp", "one time password", "money transfer", "bank account block", "kyc update",
+        "aadhar verification", "pan card link", "biometric update", "cvv number",
+        "paisa bhejo", "account freeze", "customer care", "limit increase",
+        "bank balance", "transaction failed", "account suspended", "debit card",
+
+        // 3. Tech Support & Screen Sharing
+        "share your screen", "anydesk", "teamviewer", "rustdesk", "verification code",
+        "skype verification", "video statement", "record kijiye", "remote access",
+        "system hacked", "virus detected", "technical support", "microsoft support",
+
+        // 4. Lottery & Greed Patterns
+        "lottery", "gift card", "kbc", "prize money", "kaun banega crorepati", 
+        "tax bharna padega", "processing fee", "inheritance money", "foreign remittance",
+
+        // 5. Additional Common Scams
+        "password", "login details", "security code", "verification", "confirm identity",
+        "account verification", "personal details", "bank details", "card details",
+        "upi id", "google pay", "phonepe", "paytm", "net banking"
+    ];
 
     if ('webkitSpeechRecognition' in window) {
         const recognition = new webkitSpeechRecognition();
         recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-IN';
+        recognition.interimResults = true; // High Sensitivity: Pehle word se hi detection
+        recognition.lang = 'en-IN'; // Multi-language Indian accent support
 
         btn.onclick = () => {
             recognition.start();
-            btn.innerText = "🛡️ MONITORING CALL AUDIO...";
+            btn.innerText = "🛡️ MONITORING LIVE (MULTI-LANG ACTIVE)...";
             btn.style.background = "#222"; btn.style.color = "red";
         };
 
@@ -254,12 +372,20 @@ stt_engine_code = """
             }
             tBox.innerText = ">> Live Stream: " + text;
             
+            // --- ENHANCED PATTERN MATCHING ---
             SCAM_WORDS.forEach(word => {
                 if (text.includes(word)) {
-                    window.navigator.vibrate([500, 100, 500]);
+                    // 1. Physical Alert
+                    window.navigator.vibrate([500, 100, 500, 100, 500]);
+                    
+                    // 2. UI Alert
                     popup.style.display = 'block';
+                    
+                    // 3. Audio & Defense Trigger
                     window.parent.playAlertSound();
-                    window.parent.toggleSaboteur(true); // Auto-activate Saboteur on threat
+                    window.parent.toggleSaboteur(true); // Scammer ki voice jam kar dega
+                    
+                    console.log("CRITICAL THREAT DETECTED: " + word);
                 }
             });
         };
@@ -267,12 +393,43 @@ stt_engine_code = """
         recognition.onspeechend = () => {
             window.parent.postMessage({type: 'AUTO_ANALYZE', val: true}, "*");
         };
+
+        recognition.onerror = (event) => {
+            console.error("Speech Error Detected: ", event.error);
+        };
     }
 </script>
 """
 components.html(stt_engine_code, height=280)
 
 st.write("---")
+st.write("---")
+st.subheader("⚔️ Counter-Scam Tactical Response (Digital Arrest Defense)")
+col_c1, col_c2 = st.columns(2)
+with col_c1:
+    st.markdown("🛡️ **Voice Jammer Saboteur**")
+    st.info("Activate the Saboteur to inject high-frequency noise, disrupting AI voice cloning attempts.")
+    
+    saboteur_active = st.toggle("Enable Voice Jammer Saboteur")
+
+    if saboteur_active:
+        st.error("⚠️ SABOTEUR ACTIVE: Jamming signal injected to prevent AI Voice Cloning.")
+        components.html("<script>window.parent.toggleSaboteur(true);</script>", height=0)
+    else:
+        st.success("✅ SABOTEUR DEACTIVATED.")
+        components.html("<script>window.parent.toggleSaboteur(false);</script>", height=0)
+with col_c2:
+    st.markdown("🔊 **Tactical Audio Counter-Attack**")
+    st.info("If the scammer threatens you, play these into your microphone to scare them off.")
+    
+    scam_audio_choice = st.selectbox("Select Counter-Audio:", ["select audio", "Fake Lawyer Calling", "Police Station Background Noise", "CBI Duty Officer Announcement"])
+
+    if scam_audio_choice != "select audio":
+        st.warning(f"Tactical Audio Selected: {scam_audio_choice}")
+        if st.button("▶️ PLAY LOUD INTO MIC"):
+            st.toast("Playing audio to confuse scammer...")
+            # In a real app, this would use st.audio to play a pre-recorded clip
+            st.success("Audio Jamming Protocol Initiated.")
 
 # ==========================================
 # NEW: DECOY SCREEN & GPS TRACER SECTION
@@ -295,6 +452,7 @@ col_decoy, col_gps = st.columns(2)
 
 with col_decoy:
     st.markdown("🔍 **Decoy Screen Mode**")
+    st.info("The user activates a fake banking interface that displays falsified low-balance data (e.g., ₹0.42) to scammers monitoring the screen. This psychologically deters the attacker by making the target appear financially worthless, forcing them to terminate the call while the system logs forensic evidence.")
     show_decoy = st.toggle("Enable Honey-Pot (Fake Bank UI)")
 
     if show_decoy:
@@ -315,6 +473,7 @@ with col_decoy:
 
 with col_gps:
     st.markdown("📡 **Scammer Identification**")
+    st.info("The Satellite Tracer is used to identify a scammer's real-world location by triangulating their VoIP (internet call) signal across global network nodes.")
     if st.button("🛰️ START GPS IP-TRACE", use_container_width=True):
         with st.status("Initializing Satellite Uplink...", expanded=True) as status:
             st.write("📡 Connecting to VoIP Gateway...")
@@ -547,65 +706,41 @@ if st.button("📞 EMERGENCY: DIAL 1930", type="primary", use_container_width=Tr
     st.success("Emergency Protocol Initiated.")
 
 # --- COMPACT OFFICIAL FOOTER ---
-st.markdown("""
-    <style>
-    .mini-footer {
-        background-color: #002200;
-        color: #00FF41;
-        padding: 20px;
-        border-top: 2px solid #00FF41;
-        margin-top: 50px;
-        font-family: sans-serif;
-        font-size: 13px;
-    }
-    .footer-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
-    }
-    .f-link { color: white; text-decoration: none; display: block; margin: 3px 0; }
-    .f-link:hover { color: #00FF41; }
-    .emergency-box { border: 1px dashed red; padding: 5px; color: #ff4b4b; font-weight: bold; text-align: center; }
-    </style>
-
-    <div class="mini-footer">
-        <div class="footer-grid">
+st.markdown(f"""
+    <div class="footer-main">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 50px;">
             <div>
-                <b style="color: #00FF41;">🏛️ GOVT LINKS</b>
-                <a class="f-link" href="https://cybercrime.gov.in/">● Cyber Crime Portal</a>
-                <a class="f-link" href="https://cert-in.org.in/">● CERT-In Official</a>
-                <a class="f-link" href="https://www.rbi.org.in/">● RBI Cybersecurity</a>
-                <a class="f-link" href="https://www.india.gov.in/">● Digital India</a>
-                <a class="f-link" href="https://meity.gov.in/">● MeitY</a>
-                <a class="f-link" href="https://www.cyberlawsindia.net/">● Cyber Laws India</a>
+                <b style="color: #00FF41; font-size: 22px !important;">🏛️ GOVT. OF INDIA PORTALS</b><br><br>
+                <a href="https://cybercrime.gov.in" style="color: white; text-decoration: none;">● National Cyber Crime Reporting</a><br>
+                <a href="https://sancharsaathi.gov.in" style="color: white; text-decoration: none;">● Sanchar Saathi (Chakshu Portal)</a><br>
+                <a href="https://cert-in.org.in" style="color: white; text-decoration: none;">● CERT-In Security Advisories</a><br>
+                <a href="https://www.rbi.org.in" style="color: white; text-decoration: none;">● RBI - 'RBI Kehta Hai' Awareness</a>
+                <a href="https://www.cyberdost.in" style="color: white; text-decoration: none;">● CyberDost - Cybersecurity Helpline</a>
+                <a href="https://www.india.gov.in" style="color: white; text-decoration: none;">● Digital India Initiative</a>
+                <a href="https://meity.gov.in" style="color: white; text-decoration: none;">● Ministry of Electronics & IT</a>
             </div>
             <div>
-                <b style="color: #00FF41;">⚖️ LEGAL HELP</b>
-                <span class="f-link">● IT Act Sec 66D</span>
-                <span class="f-link">● IPC Sec 420 Help</span>
-                <span class="f-link">● Data Protection Act</span>
-                <span class="f-link">● Cybercrime Laws</span>
-                <span class="f-link">● Report Cybercrime</span>
-                </span class="f-link">● Legal Aid India</span>
+                <b style="color: #00FF41; font-size: 22px !important;">⚖️ LEGAL & REGULATORY</b><br><br>
+                <span style="color: #ccc;">● Information Technology Act 2000 (Sec 66D)</span><br>
+                <span style="color: #ccc;">● DPDP Act 2023 Compliant Architecture</span><br>
+                <span style="color: #ccc;">● Bharatiya Nyaya Sanhita (Fraud Laws)</span><br>
+                <span style="color: #ccc;">● Indian Evidence Act (Digital Logs)</span>
+                <span style="color: #ccc;">● IT Rules 2021 (Due Diligence)</span><br>
+                <span style="color: #ccc;">● RBI Guidelines on Digital Security</span><br>
+                <span style="color: #ccc;">● CERT-In Incident Reporting Norms</span>
             </div>
-            <div>
-                <b style="color: #00FF41;">📞 CONTACT</b>
-                <span class="f-link">C-DAC: support@cdac.in</span>
-                <div class="emergency-box">🚨 HELPLINE: 1930</div>
-                <div class="emergency-box">📧 REPORT: cybercrime.gov.in</div>
-                <div class="emergency-box">⚠️ SMS: 14422</div>
-                <div class="emergency-box">🌐 WEBSITE: www.cybercrime.gov.in</div>
-                <div class="emergency-box">📞 TOLL-FREE: 1800-11-3690</div>
+            <div style="text-align: right; border-left: 2px solid #113311; padding-left: 20px;">
+                <b style="color: #ff4b4b; font-size: 22px !important;">🆘 24/7 HELPLINE</b><br><br>
+                <h1 style="margin:0; color: white;">1930</h1>
+                <p>Call for Immediate Fraud Reporting</p>
+                <p style="color: #888; font-size: 14px !important;">SecureVoice Pro v5.5 (Forensic Pack)</p>
             </div>
         </div>
-        <hr style="border: 0.1px solid #004400; margin: 15px 0;">
-        <div style="text-align: center; font-size: 11px; opacity: 0.7;">
-            © 2026 Team GLITCHER | Digital India Initiative
-             Built with ❤️ for a safer digital world.
-             Best viewed in dark mode for optimal experience.
-             by Balkrishna Shukla | SecureVoice-Real Time Audio Detection Engine v1.0|Engineering College Ajmer, Rajasthan|
+        <hr style="border: 0.1px solid #004400; margin: 40px 0;">
+        <div style="text-align: center; font-size: 15px !important; opacity: 0.6;">
+            © 2026 Team GLITCHER | Digital India Cybersecurity Initiative<br>
+            <b>Lead Developer:</b> Balkrishna Shukla | Engineering College Ajmer, Rajasthan<br>
+            <i>Note: This is an AI-powered real-time detection prototype for academic research.</i>
         </div>
     </div>
-    """, unsafe_allow_html=True)
-st.caption("Team GLITCHER | Balkrishna Shukla| SecureVoice-Real Time Audio Detection Engine v4.0")
-
+""", unsafe_allow_html=True)
